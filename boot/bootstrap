@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+
+export LANG=C.UTF-8
+
+echo -e "
+  _                 _       _                   
+ | |               | |     | |                  
+ | |__   ___   ___ | |_ ___| |_ _ __ __ _ _ __  
+ | '_ \ / _ \ / _ \| __/ __| __| '__/ _\` | '_ \ 
+ | |_) | (_) | (_) | |_\__ \ |_| | | (_| | |_) |
+ |_.__/ \___/ \___/ \__|___/\__|_|  \__,_| .__/ 
+                                         | |    
+                                         |_|
+"
+
+PROCESS=$$
+
+cd /root 
+
+info() { 
+    echo '[INFO] ' "$@" 
+}
+
+fatal() {
+    echo '[ERROR] ' "$@" >&2
+}
+
+# dos2unix not installed and cannot be until resolv.conf is fixed
+# converts powershell created files
+dos2unix() {
+    if [ ! $# -eq 1 ]; then
+        fatal "dos2unix() needs exactly 2 arguments"
+    fi
+
+    FILE="$1"
+    # bobross.txt -> bobross.dos2unix.txt
+    TMP_FILE="${1%.*}.dos2unix.${1##*.}"
+    
+    # switch character encoding
+    iconv -f UTF-16 -t US-ASCII "$FILE" -o "$TMP_FILE"
+
+    # EOL conversion CRLF -> LF
+    tr -d '\015' < "$TMP_FILE" > "$FILE"
+
+    rm -f "$TMP_FILE"
+}
+
+# update resolv.conf with dns servers
+# combination of resolv.conf + wsl-vpnkit fixes the issues with VPN
+resolv() {
+    rm -f /etc/resolv.conf
+
+    dos2unix resolv.txt
+    sed 's/[^ ]* */nameserver &/g' < <(head -n2 resolv.txt) > /etc/resolv.conf
+
+    rm -f /root/resolv.txt
+}
+
+pkgs() {
+    dnf --setopt=install_weak_deps=False install -y $(cat dnf.txt | tr '\n' ' ')
+    dnf clean packages
+}
+
+adduser() {
+    dos2unix adduser.txt
+    WSL_USER=$(< adduser.txt)
+
+    useradd -G wheel "$WSL_USER"
+
+    echo "Defaults timestamp_timeout=120
+    %wheel        ALL=(ALL)       NOPASSWD: ALL" > /etc/sudoers.d/wheel
+
+    sed -i 's/^[ \t]*//' /etc/sudoers.d/wheel 
+}
+
+nvim() {
+    wget -O /tmp/nvim-linux64.tar.gz https://github.com/neovim/neovim/releases/download/stable/nvim-linux64.tar.gz
+    tar -xzf /tmp/nvim-linux64.tar.gz --transform=s/nvim-linux64/nvim/ -C /opt
+}
+
+wsl_conf() {
+    printf "%s" "[user]
+        default = ${WSL_USER}
+
+        [network]
+        generateResolvConf = false
+    " | sed 's/^[ \t]*//' > /etc/wsl.conf
+
+    chown ${WSL_USER}:${WSL_USER} /etc/wsl.conf
+}
+
+# --------------------------------------
+# main
+# --------------------------------------
+
+{
+    resolv
+    pkgs
+    adduser
+    wsl_conf
+    nvim
+}
+
+exit 0
